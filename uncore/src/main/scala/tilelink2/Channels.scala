@@ -11,7 +11,10 @@ import PermissionsDeltas._
 /** Base traits for all TileLink channels.
   * Directionality of message channel can be used to hook up
   * logical network ports to physical network ports */
-abstract class TileLinkChannel(implicit p: Parameters) extends TileLinkBundle()(p)
+abstract class TileLinkChannel(implicit p: Parameters) extends TileLinkBundle()(p) {
+  def size(dummy: Option[Any] = None): UInt
+}
+
 abstract class ClientToManagerChannel(implicit p: Parameters) extends TileLinkChannel()(p)
 abstract class ManagerToClientChannel(implicit p: Parameters) extends TileLinkChannel()(p)
 abstract class ClientToClientChannel(implicit p: Parameters) extends TileLinkChannel()(p) // Unused for now
@@ -25,7 +28,7 @@ trait HasTileLinkData {
   val data: UInt
 
   def hasData(dummy: Option[Any] = None): Bool
-  def hasSuperbeatData(dummy: Option[Any] = None): Bool
+  def hasMultibeatData(dummy: Option[Any] = None): Bool
 }
 
 trait HasAcquireMessageType extends HasTileLinkParameters {
@@ -39,6 +42,8 @@ trait HasAcquireMessageType extends HasTileLinkParameters {
       ATOMIC -> atomic,
       CACHE -> cache))
   }
+
+  def isType(t: UInt) = a_type === t
 }
 
 trait HasGrantMessageType extends MightBeVoluntary {
@@ -54,6 +59,7 @@ trait HasGrantMessageType extends MightBeVoluntary {
       VOLREL -> vol))
   }
 
+  def isType(t: UInt) = g_type === t
   def isVoluntary(dummy: Option[Any] = None): Bool = g_type === VOLREL
 }
 
@@ -125,10 +131,20 @@ class AcquireMetadata(implicit p: Parameters) extends ClientToManagerChannel
   val addr = UInt(width = tlAddrWidth) // aligned to databits
   val wmask = UInt(width = tlWmaskWidth) // within databits
   val union = UInt(width = tlAcquireUnionWidth) // amo_opcode || hints || policy
-  val size = UInt(width = tlTransferSizeWidth) // actual size = 8*2**size
+  val sz = UInt(width = tlTransferSizeWidth) // actual size = 8*2**size
+
+  // size of this message's data (NOT of resp)
+  def size(dummy: Option[Any] = None): UInt = {
+    acquireTypeLookup(
+      get = UInt(0),
+      put = sz,
+      hint = UInt(0),
+      atomic = sz,
+      cache = UInt(0))
+  }
 
   def cwf(dummy: Option[Any] = None): Bool = {
-    val hint = (size > UInt(tlPhysicalDataWidth)) && (beatAddrBits() =/= UInt(0))
+    val hint = (sz > UInt(tlPhysicalDataWidth)) && (beatAddrBits() =/= UInt(0))
     acquireTypeLookup(
       get = hint,
       put = Bool(false),
@@ -150,7 +166,11 @@ class AcquireMetadata(implicit p: Parameters) extends ClientToManagerChannel
 
   def wmaskToLowAddrBits(dummy: Option[Any] = None): UInt = UInt(0) // TODO
 
-  def fullAddr(dummy: Option[Any] = None): UInt = addr << UInt(tlSubBeatAddrWidth) 
+  def addr_beat(dummy: Option[Any] = None): UInt = UInt(0) // TODO
+
+  def full_addr(dummy: Option[Any] = None): UInt = addr << UInt(tlSubBeatAddrWidth) 
+
+  def full_wmask(dummy: Option[Any] = None): UInt =  FillInterleaved(8, wmask) 
 
   def criticalWordAddr(dummy: Option[Any] = None): UInt = UInt(0) // TODO
 
@@ -162,7 +182,7 @@ class AcquireMetadata(implicit p: Parameters) extends ClientToManagerChannel
       atomic = Bool(true),
       cache = Bool(false))
 
-  def hasSuperbeatData(dummy: Option[Any] = None): Bool = size > UInt(tlPhysicalDataWidth)
+  def hasMultibeatData(dummy: Option[Any] = None): Bool = size() > UInt(tlPhysicalDataWidth)
 }
 
 /** [[uncore.AcquireMetadata]] with an extra field containing the data beat */
@@ -182,10 +202,20 @@ class GrantMetadata(implicit p: Parameters) extends ManagerToClientChannel
   val g_type = UInt(width = tlGrantTypeWidth)
   val source = UInt(width = tlSourceIdWidth)
   val sink = UInt(width = tlSinkIdWidth)
+  val sz = UInt(width = tlTransferSizeWidth) // actual size = 8*2**size
   val error = Bool()
   val cwf = Bool()
-  val size = UInt(width = tlTransferSizeWidth) // actual size = 8*2**size
   val policy = new CachePolicySpecific
+
+  def size(dummy: Option[Any] = None): UInt = {
+    grantTypeLookup(
+      get = sz,
+      put = UInt(0),
+      hint = UInt(0),
+      atomic = sz,
+      cache = UInt(tlPermGranularityWidth),
+      vol = UInt(0))
+  }
 
   // mostly same as Acquire but can Grant extra perms on cached
   def perms(dummy: Option[Any] = None): UInt = {
@@ -208,7 +238,7 @@ class GrantMetadata(implicit p: Parameters) extends ManagerToClientChannel
       vol = Bool(false))
   }
 
-  def hasSuperbeatData(dummy: Option[Any] = None): Bool = size > UInt(tlPhysicalDataWidth)
+  def hasMultibeatData(dummy: Option[Any] = None): Bool = size() > UInt(tlPhysicalDataWidth)
 
   def makeFinish(dummy: Option[Any] = None): Finish = {
     val f = Wire(new Finish)
@@ -220,6 +250,49 @@ class GrantMetadata(implicit p: Parameters) extends ManagerToClientChannel
 /** [[uncore.GrantMetadata]] with an extra field containing a single beat of data */
 class Grant(implicit p: Parameters) extends GrantMetadata with HasTileLinkData {
   val data  = UInt(width = tlPhysicalDataWidth)
+}
+
+object Grant {
+  def apply(
+        g_type: UInt,
+        source: UInt,
+        sink: UInt,
+        size: UInt,
+        error: Bool = Bool(false),
+        cwf: Bool = Bool(false),
+        data: UInt = UInt(0))
+      (implicit p: Parameters): Grant = {
+    val gnt = Wire(new Grant)
+    gnt.g_type := g_type
+    gnt.source := source
+    gnt.sink := sink
+    gnt.sz := size
+    gnt.error := error
+    gnt.cwf := cwf
+    gnt.policy := UInt(0)
+    gnt.data := data
+    gnt
+  }
+
+  def fromAcquire(
+        gnt: DecoupledIO[Grant],
+        acq: DecoupledIO[AcquireMetadata],
+        sink: UInt = UInt(0),
+        error: Bool = Bool(false),
+        data: UInt = UInt(0))
+      (implicit p: Parameters): Unit = {
+    val bits = Grant(
+      g_type = acq.bits.a_type,
+      source = acq.bits.source,
+      sink = sink,
+      size = acq.bits.sz, // TODO
+      error = error,
+      cwf = acq.bits.cwf(), // TODO  
+      data = data)(p)
+    gnt.valid := acq.valid
+    gnt.bits := bits
+    acq.ready := TileLinkBeatCounter(gnt.fire(), gnt.bits).done
+  }
 }
 
 /** The Probe channel is used to force clients to release data or cede permissions
@@ -239,6 +312,7 @@ class Probe(implicit p: Parameters) extends ManagerToClientChannel{
     "Downgrade"  AnyToR    => RWtoR  or RtoR or NtoN
     "Clean"      AnytoSame => RWtoRW or RtoR or NtoN
   */
+  def size(dummy: Option[Any] = None) = UInt(0)
 }
 
 /** The Release channel is used to release data or permission back to the manager
@@ -258,7 +332,7 @@ class ReleaseMetadata(implicit p: Parameters) extends ClientToManagerChannel {
   
   def size(dummy: Option[Any] = None): UInt = UInt(log2Up(tlPermGranularityWidth))
   def hasData(dummy: Option[Any] = None): Bool = has_data
-  def hasSuperbeatData(dummy: Option[Any] = None): Bool = size() > UInt(tlPhysicalDataWidth)
+  def hasMultibeatData(dummy: Option[Any] = None): Bool = size() > UInt(tlPhysicalDataWidth)
 }
 
 /** [[uncore.ReleaseMetadata]] with an extra field containing the data beat */
@@ -274,6 +348,8 @@ class Release(implicit p: Parameters) extends ReleaseMetadata with HasTileLinkDa
   */
 class Finish(implicit p: Parameters) extends ClientToManagerChannel()(p) {
   val sink = UInt(width = tlSinkIdWidth)
+
+  def size(dummy: Option[Any] = None) = UInt(0)
 }
 
 class TileLinkIO(implicit p: Parameters) extends TileLinkBundle()(p) {

@@ -31,7 +31,7 @@ case class TileLinkManagerParameters(sinkView: Seq[TileLinkSinkParameters]) {
   def supportsAcquire: Bool = {
     // tl(,) function checks: assertion: supportsAcquire || nCaches == 0
     //                        assertion: supportsAcquire || !release.valid
-    Boo(true)
+    Bool(true)
   }
   def nSinks: Int = sinkView.map(_.sinkIds.count).sum
   //def buildCacheInfo(): UInt => Chilse(RegionType) // UInt = address, not sink_id
@@ -73,6 +73,7 @@ trait HasTileLinkParameters {
   val tlSourceIdWidth = log2Up(clientParameters.nSources)
   val tlSinkIdWidth = log2Up(managerParameters.nSinks)
   val tlTransferSizeWidth = log2Up(clientParameters.maxTransferSize)
+  val tlMaxTransferSize = clientParameters.maxTransferSize
 
   val tlWmaskWidth = tlPhysicalDataBytes
 

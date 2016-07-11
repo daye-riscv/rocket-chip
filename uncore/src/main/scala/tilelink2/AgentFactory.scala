@@ -3,19 +3,88 @@
 package uncore.tilelink2
 
 import Chisel._
+import cde.Parameters
+import ProtocolTransactionTypes._
 
 abstract class TileLinkAgentFactory {
   def getClientParams(
     realm: TileLinkRealmParameters,
-    subclients: Seq[TileLinkClientParameters]): TileLinkClientParameters
+    subclients: Seq[TileLinkClientParameters]): Option[TileLinkClientParameters]
 //    = { memoize(clients.map(_.getClientParams())) }
 
   def getManagerParams(
     realm: TileLinkRealmParameters,
-    submanagers: Seq[TileLinkManagerParameters]): TileLinkManagerParameters
+    submanagers: Seq[TileLinkManagerParameters]): Option[TileLinkManagerParameters]
 //    = { memoize(managers.map(_.getManagerParams())) }
 
 //def autoConnect() = (getClientParams(), getManagerParams(), degreeCheck())
+}
+
+abstract class TileLinkManagerFactory {
+  def getClientParams(
+    realm: TileLinkRealmParameters,
+    subclients: Seq[TileLinkClientParameters]): Option[TileLinkClientParameters] = {
+      assert(false, "Managers don't have client parameters.")
+      None
+  }
+}
+
+
+abstract class TileLinkSlaveDevice(implicit p: Parameters) extends TileLinkModule()(p) {
+  val io = new TileLinkBundle with HasTileLinkIO {
+    val nClientPorts = 0
+    val nManagerPorts = 1
+  } 
+
+  def load(v: Vec[UInt], acq: Acquire): UInt = {
+    val ldBits = v.head.getWidth
+    require(isPow2(ldBits) && ldBits >= 8)
+    val ldBytes = ldBits/8
+    val inBits = tlPhysicalDataWidth
+    val inBytes = tlPhysicalDataBytes
+    val ratio = inBits/ldBits
+    val addr = acq.full_addr()
+
+    if (ldBits > inBits) {
+      (v(addr(log2Up(ldBytes*v.size)-1, log2Up(ldBytes))) >>
+         addr(log2Up(ldBytes)-1,        log2Up(inBytes))
+          )(inBits-1, 0)
+    } else {
+      val row = for (i <- 0 until v.size by ratio)
+        yield Cat(v.slice(i, i + ratio).reverse)
+      if (row.size == 1) row.head
+      else Vec(row)(addr(log2Up(ldBytes*v.size)-1,log2Up(inBytes)))
+    }
+  }
+
+  def store(v: Vec[UInt], acq: Acquire): UInt = {
+    val stBits = v.head.getWidth
+    require(isPow2(stBits) && stBits >= 8)
+    val stBytes = stBits/8
+    val inBits = tlPhysicalDataWidth
+    val inBytes = tlPhysicalDataBytes
+    val ratio = inBits/stBits
+    val addr = acq.full_addr()
+    val rdata = load(v, acq)
+    val wdata = (acq.data & acq.full_wmask()) | (rdata & ~acq.full_wmask())
+
+    if (stBits <= inBits) {
+      val word =
+        if (ratio >= v.size) UInt(0)
+        else addr(log2Up(stBytes*v.size)-1,log2Up(inBytes))
+      for (i <- 0 until v.size) {
+        when (acq.a_type === PUT && word === UInt(i/ratio)) {
+          v(i) := wdata >> UInt(inBits * (i % ratio))
+        }
+      }
+    } else {
+      val i = addr(log2Up(stBytes*v.size)-1,log2Up(stBytes))
+      val mask = FillInterleaved(inBits, UIntToOH(addr(log2Up(stBytes)-1,log2Up(inBytes))))
+      v(i) := (wdata & mask) | (v(i) & ~mask)
+    }
+    rdata
+  }
+      
 }
 
 /*
