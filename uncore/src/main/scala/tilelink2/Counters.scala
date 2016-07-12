@@ -49,6 +49,8 @@ object TileLinkBeatCounter {
     status.done := cond && wrap
     status
   }
+
+  def apply(c: DecoupledIO[TileLinkChannel]): BeatCounterStatus = apply(c.fire(), c.bits)
 }
 
 

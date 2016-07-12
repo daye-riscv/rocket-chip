@@ -68,6 +68,17 @@ class HintPolicySpecific extends Bundle {
   val with_write_permissions = Bool()
 }
 
+object HintPolicySpecific {
+  def apply(should: Bool, write: Bool): HintPolicySpecific = {
+    val h = Wire(new HintPolicySpecific)
+    h.should_allocate := should
+    h.with_write_permissions := write
+    h
+  }
+
+  def apply(should: Boolean, write: Boolean): HintPolicySpecific = apply(Bool(should),Bool(write))
+}
+
 class CachePolicySpecific extends Bundle {
   val perms = UInt(width = permissionsDeltaWidth)
   val custom = Bool()
@@ -105,12 +116,12 @@ trait HasAcquireUnion extends HasAcquireMessageType {
   }
 
   def policy(dummy: Option[Any] = None): CachePolicySpecific = {
-    // TODO assert user has a_type === CACHE
+    //assert(a_type === CACHE, "Union isn't storing coherence metadata for this message type.")
     new CachePolicySpecific().fromBits(union)
   }
 
   def hints(dummy: Option[Any] = None): HintPolicySpecific = {
-    // TODO asser user has a_type === HINT
+    //assert(a_type === HINT, "Union isn't storing hints for this message type.")
     new HintPolicySpecific().fromBits(union)
   }
 }
@@ -188,6 +199,27 @@ class AcquireMetadata(implicit p: Parameters) extends ClientToManagerChannel
 /** [[uncore.AcquireMetadata]] with an extra field containing the data beat */
 class Acquire(implicit p: Parameters) extends AcquireMetadata with HasTileLinkData {
   val data = UInt(width = tlPhysicalDataWidth)
+}
+
+object Acquire {
+  def apply(
+        a_type: UInt,
+        source: UInt,
+        addr: UInt,
+        wmask: UInt,
+        union: UInt,
+        sz: UInt,
+        data: UInt)
+      (implicit p: Parameters): Acquire = {
+    val acq = Wire(new Acquire)
+    acq.a_type := a_type
+    acq.source := source
+    acq.addr := addr
+    acq.wmask := wmask
+    acq.sz := sz
+    acq.data := data
+    acq
+  }
 }
 
 /** The Grant channel is used to refill data or grant permissions requested of the 

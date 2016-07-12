@@ -68,6 +68,7 @@ trait HasTileLinkParameters {
   val tlDataBeats = tlExternal.dataBeats
   val tlDataBits = tlExternal.dataBitsPerBeat
   val tlDataBytes = tlDataBits/8
+  val tlCacheBlockBytes = tlDataBytes * tlDataBeats
   val tlWriteMaskBits = tlExternal.writeMaskBits
   val tlBeatAddrBits = log2Up(tlDataBeats)
   val tlByteAddrBits = log2Up(tlWriteMaskBits)
@@ -223,6 +224,9 @@ trait HasAcquireType extends HasTileLinkParameters {
 
   /** Is this message a built-in read message */
   def isGet(dummy: Int = 0): Bool = isBuiltInType() && (is(Acquire.getType) || is(Acquire.getBlockType))
+
+  /** Is this message a built-in read message */
+  def isPut(dummy: Int = 0): Bool = isBuiltInType() && (is(Acquire.putType) || is(Acquire.putBlockType))
 
   /** Does this message contain data? Assumes that no custom message types have data. */
   def hasData(dummy: Int = 0): Bool = isBuiltInType() && a_type.isOneOf(Acquire.typesWithData)

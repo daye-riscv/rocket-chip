@@ -57,7 +57,7 @@ trait HasTileLinkParameters {
   val managerParameters: TileLinkManagerParameters = p(TLManagerKey(p(TLId)))
   val realmParameters: TileLinkRealmParameters = p(TLRealmKey(p(TLId)))
 
-  val tlCoh = realmParameters.policy
+  val tlPolicy = realmParameters.policy
   val tlPhysicalDataWidth = realmParameters.physicalDataWidth
   val tlPhysicalDataBytes = tlPhysicalDataWidth / 8
   val tlSubBeatAddrWidth = log2Up(tlPhysicalDataWidth)
@@ -79,7 +79,7 @@ trait HasTileLinkParameters {
 
   val tlAcquireUnionWidth = Seq(ProtocolTransactionTypes.acquireHintWidth,
                                 AtomicOpCodes.atomicOpCodeWidth,
-                                tlCoh.acquireTypeWidth).max
+                                tlPolicy.acquireTypeWidth).max
   val tlAcquireTypeWidth = ProtocolTransactionTypes.acquireTypeWidth
   val tlGrantTypeWidth = ProtocolTransactionTypes.grantTypeWidth
 }

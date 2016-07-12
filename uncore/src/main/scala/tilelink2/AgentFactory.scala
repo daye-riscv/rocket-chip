@@ -29,6 +29,12 @@ abstract class TileLinkManagerFactory {
   }
 }
 
+abstract class TileLinkMasterDevice(implicit p: Parameters) extends TileLinkModule()(p) {
+  val io = new TileLinkBundle with HasTileLinkIO {
+    val nClientPorts = 1
+    val nManagerPorts = 0
+  } 
+}
 
 abstract class TileLinkSlaveDevice(implicit p: Parameters) extends TileLinkModule()(p) {
   val io = new TileLinkBundle with HasTileLinkIO {
