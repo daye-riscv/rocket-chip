@@ -23,7 +23,12 @@ case class TileLinkRealmParameters(
 case class TileLinkSinkParameters(
   sinkIds:      Range,
   regionType:   RegionType,
-  allowAtomics: Boolean, // at terminal managers, all regions should agree on yes/no atomics
+  fifoOrder: Boolean, // each term manager can specify.
+                      // must also pass through ids without inspecting, only forward them back
+  supportsAtomics: Boolean, // at terminal managers, all regions should agree on yes/no atomics
+  supportsHints: Boolean,
+  supportsCaching: Boolean,
+  supportsMultibeat: Boolean,
   matchAddress: Long,
   maskAddress:  Long)
 
@@ -39,14 +44,15 @@ case class TileLinkManagerParameters(sinkView: Seq[TileLinkSinkParameters]) {
 }
 
 case class TileLinkSourceParameters(
-  isCache:          Boolean,
+  supportsProbe:    Boolean,
   maxTransferSize:  Int,
   sourceIds:        Range) // (1 MSHR = 1 source; 1 client has 1+ sources)
   
 case class TileLinkClientParameters(sourceView: Seq[TileLinkSourceParameters]) {
+  
   def maxTransferSize: Int = sourceView.map(_.maxTransferSize).max
   def nSources: Int = sourceView.map(_.sourceIds.count).sum
-  def nCaches: Int = sourceView.map(s => if(s.isCache) 1 else 0).sum
+  def nCaches: Int = sourceView.map(s => if(s.supportsProbe) 1 else 0).sum
   //def makeSourceToCache() = ... 
   //def makeCacheToStartSource() = ...
 }
