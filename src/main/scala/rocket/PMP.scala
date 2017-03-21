@@ -101,9 +101,7 @@ class PMP(implicit p: Parameters) extends PMPReg {
   // returns whether this matching PMP fully contains the access
   def aligned(x: UInt, lgSize: UInt, lgMaxSize: Int, prev: PMP): Bool = if (lgMaxSize <= lgAlign) true.B else {
     val lsbMask = ~(((BigInt(1) << lgMaxSize) - 1).U << lgSize)(lgMaxSize-1, 0)
-    val straddlesLowerBound = ((x >> lgMaxSize) ^ (prev.comparand >> lgMaxSize)) === 0 && (prev.comparand(lgMaxSize-1, 0) & ~x(lgMaxSize-1, 0)) =/= 0
-    val straddlesUpperBound = ((x >> lgMaxSize) ^ (comparand >> lgMaxSize)) === 0 && (comparand(lgMaxSize-1, 0) & (x(lgMaxSize-1, 0) | lsbMask)) =/= 0
-    val rangeAligned = !(straddlesLowerBound || straddlesUpperBound)
+    val rangeAligned = (prev.comparand(lgMaxSize-1, 0) & lsbMask) === 0 && (comparand(lgMaxSize-1, 0) & lsbMask) === 0
     val pow2Aligned = (lsbMask & ~mask(lgMaxSize-1, 0)) === 0
     Mux(cfg.a(1), rangeAligned, pow2Aligned)
   }
