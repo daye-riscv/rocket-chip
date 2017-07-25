@@ -11,7 +11,7 @@ import freechips.rocketchip.tile.HasCoreParameters
 import freechips.rocketchip.util._
 
 case class BTBParams(
-  nEntries: Int = 40,
+  nEntries: Int = 32,
   nMatchBits: Int = 14,
   nPages: Int = 6,
   nRAS: Int = 3,
