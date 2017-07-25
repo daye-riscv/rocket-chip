@@ -96,9 +96,8 @@ class FrontendModule(outer: Frontend) extends LazyModuleImp(outer)
   val s2_xcpt = !s2_tlb_resp.miss && fq.io.enq.bits.xcpt.asUInt.orR
   val s2_speculative = Reg(init=Bool(false))
   val s2_partial_insn_valid = RegInit(false.B)
-  val s2_partial_insn_imm = Reg(UInt(width = 5))
-  val s2_partial_cfi = Reg(Bool())
-  val s2_partial_jump = Reg(Bool())
+  val s2_partial_insn = Reg(UInt(width = coreInstBits))
+  val s2_wrong_path = Reg(Bool())
 
   val s1_base_pc = ~(~s1_pc | (fetchBytes - 1))
   val ntpc = s1_base_pc + fetchBytes.U
@@ -176,12 +175,6 @@ class FrontendModule(outer: Frontend) extends LazyModuleImp(outer)
     when (fq.io.enq.fire()) {
       val s2_btb_hit = s2_btb_resp_valid && s2_btb_resp_bits.taken
 
-      val partial_cfi = s2_partial_insn_valid && s2_partial_cfi
-      val partial_insn_opcode =
-        Mux(s2_partial_jump, Instructions.JAL.value.asUInt, Instructions.BEQ.value.asUInt) |
-        Mux(s2_partial_cfi, 0.U, Instructions.ECALL.value.asUInt)
-      val partial_insn = Cat(s2_partial_insn_imm(4,1), s2_partial_insn_imm, partial_insn_opcode(6,0))
-
       def scanInsns(idx: Int, prevValid: Bool, prevBits: UInt, prevTaken: Bool): Bool = {
         val prevRVI = prevValid && prevBits(1,0) === 3
         val valid = fq.io.enq.bits.mask(idx) && !prevRVI && !prevTaken
@@ -190,29 +183,36 @@ class FrontendModule(outer: Frontend) extends LazyModuleImp(outer)
         val rviBits = Cat(bits, prevBits)
         val rviBranch = rviBits(6,0) === Instructions.BEQ.value.asUInt()(6,0)
         val rviJump = rviBits(6,0) === Instructions.JAL.value.asUInt()(6,0)
-        val rviJAL = rviJump && rviBits(7)
+        val rviJALR = rviBits(6,0) === Instructions.JALR.value.asUInt()(6,0)
+        val rviReturn = rviJALR && !rviBits(7) && BitPat("b00?01") === rviBits(19,15)
+        val rviCall = (rviJALR || rviJump) && rviBits(7)
         val rvcBranch = bits === Instructions.C_BEQZ || bits === Instructions.C_BNEZ
         val rvcJAL = Bool(xLen == 32) && bits === Instructions.C_JAL
         val rvcJump = bits === Instructions.C_J || rvcJAL
-        val rvcImm = Mux(bits(14), new RVCDecoder(bits).bImm.asSInt, new RVCDecoder(bits).jImm.asSInt)
-        val rvcReturn = bits === Instructions.C_MV && BitPat("b00?01") === bits(11,7) && bits(6,2) === 0
+        val rvcImm = Mux(bits(14), new RVCDecoder(bits).bImm.asSInt, 0.S) | Mux(bits(14,13) === 1, new RVCDecoder(bits).jImm.asSInt, 0.S)
+        val rvcJR = bits === Instructions.C_MV && bits(6,2) === 0
+        val rvcReturn = rvcJR && BitPat("b00?01") === bits(11,7)
         val rvcJALR = bits === Instructions.C_ADD && bits(6,2) === 0
-        val rviImm = Mux(rviBits(2), ImmGen(IMM_UJ, rviBits), ImmGen(IMM_SB, rviBits))
+        val rvcCall = rvcJAL || rvcJALR
+        val rviImm = Mux(rviBits(3), ImmGen(IMM_UJ, rviBits), 0.S) | Mux(!rviBits(2), ImmGen(IMM_SB, rviBits), 0.S)
         val taken =
-          prevRVI && (rviJump || rviBranch && s2_btb_resp_bits.bht.taken) ||
-          valid && (rvcJump || rvcReturn && btb.io.ras_head.valid || rvcBranch && s2_btb_resp_bits.bht.taken)
+          prevRVI && (rviJump || rviJALR || rviBranch && s2_btb_resp_bits.bht.taken) ||
+          valid && (rvcJump || rvcJALR || rvcJR || rvcBranch && s2_btb_resp_bits.bht.taken)
 
         when (!prevTaken) {
           val pc = Cat(s2_pc >> log2Ceil(fetchBytes), UInt(idx*coreInstBytes, log2Ceil(fetchBytes)))
           val sequential_npc = pc + coreInstBytes
-          when (taken) {
-             btb.io.ras_update.valid := prevRVI && rviJAL || valid && (rvcJAL || rvcJALR || rvcReturn)
-             btb.io.ras_update.bits.prediction.valid := true
-             btb.io.ras_update.bits.cfiType := Mux(Mux(prevRVI, false.B, rvcReturn), CFIType.ret, CFIType.call)
-             btb.io.ras_update.bits.returnAddr := sequential_npc
-          }
+
+          btb.io.ras_update.valid := !s2_wrong_path && (prevRVI && (rviCall || rviReturn) || valid && (rvcCall || rvcReturn))
+          btb.io.ras_update.bits.prediction.valid := true
+          btb.io.ras_update.bits.cfiType := Mux(Mux(prevRVI, rviReturn, rvcReturn), CFIType.ret, CFIType.call)
+          btb.io.ras_update.bits.returnAddr := sequential_npc
 
           when (!s2_btb_hit) {
+            when (prevRVI && (rviJALR && !(rviReturn && btb.io.ras_head.valid)) ||
+                  valid && (rvcJALR || (rvcJR && !btb.io.ras_head.valid))) {
+              s2_wrong_path := true
+            }
             fq.io.enq.bits.btb.bits.bridx := idx
             when (taken) {
               val rviAdder = (pc - coreInstBytes).asSInt + rviImm
@@ -221,20 +221,16 @@ class FrontendModule(outer: Frontend) extends LazyModuleImp(outer)
             }
 
             when (prevRVI && rviBranch || valid && rvcBranch) {
-              btb.io.bht_advance.valid := !s2_btb_resp_valid
+              btb.io.bht_advance.valid := !s2_wrong_path && !s2_btb_resp_valid
               btb.io.bht_advance.bits := s2_btb_resp_bits
             }
           }
         }
 
         if (idx == fetchWidth-1) {
-          val partialBranch = bits(6,0) === Instructions.BEQ.value.asUInt()(6,0)
-          val partialJump = bits(6,0) === Instructions.JAL.value.asUInt()(6,0)
           s2_partial_insn_valid := valid && !rvc
           when (valid && !rvc) {
-            s2_partial_insn_imm := Cat(Mux(bits(2), bits(15,12), bits(11,8)), bits(7))
-            s2_partial_cfi := partialBranch || partialJump
-            s2_partial_jump := bits(2)
+            s2_partial_insn := bits | 0x3
           }
           prevTaken || taken
         } else {
@@ -242,7 +238,7 @@ class FrontendModule(outer: Frontend) extends LazyModuleImp(outer)
         }
       }
 
-      val taken = scanInsns(0, s2_partial_insn_valid, partial_insn, false.B)
+      val taken = scanInsns(0, s2_partial_insn_valid, s2_partial_insn, false.B)
       when (s2_btb_hit) {
         s2_partial_insn_valid := false
       }.elsewhen (taken) {
@@ -252,6 +248,7 @@ class FrontendModule(outer: Frontend) extends LazyModuleImp(outer)
       }
     }
     when (s2_redirect) { s2_partial_insn_valid := false }
+    when (io.cpu.req.valid) { s2_wrong_path := false }
   }
 
   io.cpu.resp <> fq.io.deq

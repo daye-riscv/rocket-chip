@@ -14,7 +14,7 @@ case class BTBParams(
   nEntries: Int = 32,
   nMatchBits: Int = 14,
   nPages: Int = 6,
-  nRAS: Int = 3,
+  nRAS: Int = 4,
   nBHT: Int = 256,
   updatesOutOfOrder: Boolean = false)
 
