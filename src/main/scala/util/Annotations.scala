@@ -15,7 +15,7 @@ import org.json4s.JsonDSL._
 import org.json4s.jackson.JsonMethods.{pretty, render}
 
 /** Record a set of interrupts. */
-case class InterruptsPortAnnotation(target: Named, nInterrupts: Seq[Int]) extends SingleTargetAnnotation[Named] {
+case class InterruptsPortAnnotation(target: Named, name: String, nInterrupts: Seq[Int]) extends SingleTargetAnnotation[Named] {
   def duplicate(n: Named) = this.copy(n)
 }
 /** Record a case class that was used to parameterize this target. */
@@ -80,9 +80,10 @@ case class ResetVectorAnnotation(target: Named, resetVec: BigInt) extends Single
 
 /** Helper object containing methods for applying annotations to targets */
 object Annotated {
-  def interrupts(component: InstanceId, interrupts: Seq[Int]): Unit = {
+  def interrupts(component: InstanceId, name: String, interrupts: Seq[Int]): Unit = {
     annotate(new ChiselAnnotation {def toFirrtl: Annotation = InterruptsPortAnnotation(
       component.toNamed,
+      name,
       interrupts
     )})
   }
