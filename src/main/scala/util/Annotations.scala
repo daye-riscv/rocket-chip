@@ -158,8 +158,8 @@ object GenRegDescsAnno {
 
   var GLOBAL_EXTERNAL_INTERRUPTS = "global-external-interrupts"
   var LOCAL_EXTERNAL_INTERRUPTS = "local-external-interrupts"
-  var LOCAL_INTERRUPTS_STARTING_NUMBER = 16 - 1 /* TODO the ISA specfication reserves the first 12 interrupts but
-  somewhere in DTS 16 is used as the starting number. The interrupt nubmering starts with 1 so we subtract 1 from 16 */
+  var LOCAL_INTERRUPTS_STARTING_NUMBER = 16 /* TODO the ISA specfication reserves the first 12 interrupts but
+  somewhere in DTS 16 is used as the starting number. */
   def makeRegMappingSer(
     rawModule: RawModule,
     moduleName: String,
