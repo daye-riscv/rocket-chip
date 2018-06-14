@@ -43,9 +43,10 @@ class DCacheDataArray(implicit p: Parameters) extends L1HellaCacheModule()(p) {
   val wWords = io.req.bits.wdata.grouped(encBits * (wordBits / eccBits))
   val addr = io.req.bits.addr >> rowOffBits
 
-  val data_arrays = Seq.fill(rowBytes / wordBytes) {
+  val data_arrays = Seq.tabulate(rowBytes / wordBytes) {
+    i =>
     DescribedSRAM(
-      name = "data_arrays",
+      name = s"data_arrays_${i}",
       desc = "DCache Data Array",
       size = nSets * refillCycles,
       data = Vec(nWays * (wordBits / eccBits), UInt(width = encBits))

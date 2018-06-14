@@ -226,9 +226,10 @@ class ICacheModule(outer: ICache) extends LazyModuleImp(outer)
 
   require(tl_out.d.bits.data.getWidth % wordBits == 0)
 
-  val data_arrays = Seq.fill(tl_out.d.bits.data.getWidth / wordBits) {
+  val data_arrays = Seq.tabulate(tl_out.d.bits.data.getWidth / wordBits) {
+    i =>
     DescribedSRAM(
-      name = "data_arrays",
+      name = s"data_arrays_${i}",
       desc = "ICache Data Array",
       size = nSets * refillCycles,
       data = Vec(nWays, UInt(width = dECC.width(wordBits)))
