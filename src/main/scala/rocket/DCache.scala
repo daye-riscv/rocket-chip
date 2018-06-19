@@ -300,20 +300,16 @@ class DCacheModule(outer: DCache) extends HellaCacheModule(outer) {
   val s2_lr = Bool(usingAtomics && !usingDataScratchpad) && s2_req.cmd === M_XLR
   val s2_sc = Bool(usingAtomics && !usingDataScratchpad) && s2_req.cmd === M_XSC
   val lrscCount = Reg(init=UInt(0))
-  val tl_error_valid = RegInit(false.B)
   val lrscValid = lrscCount > lrscBackoff
   val lrscAddr = Reg(UInt())
   val lrscAddrMatch = lrscAddr === (s2_req.addr >> blockOffBits)
   val s2_sc_fail = s2_sc && !(lrscValid && lrscAddrMatch)
-  val s2_tl_error = tl_error_valid && lrscAddrMatch
   when (s2_valid_hit && s2_lr && !cached_grant_wait || s2_valid_cached_miss) {
-    tl_error_valid := false
     lrscCount := Mux(s2_hit, lrscCycles - 1, 0.U)
     lrscAddr := s2_req.addr >> blockOffBits
   }
   when (lrscCount > 0) { lrscCount := lrscCount - 1 }
-  when ((s2_valid_masked && lrscCount > 0) || io.cpu.invalidate_lr) { lrscCount := 0 }
-  when (s2_valid_masked || io.cpu.invalidate_lr) { tl_error_valid := false }
+  when (s2_valid_masked && lrscCount > 0) { lrscCount := 0 }
 
   // don't perform data correction if it might clobber a recent store
   val s2_correct = s2_data_error && !any_pstore_valid && !RegNext(any_pstore_valid) && Bool(usingDataScratchpad)
@@ -470,7 +466,6 @@ class DCacheModule(outer: DCache) extends HellaCacheModule(outer) {
       grantInProgress := true
       assert(cached_grant_wait, "A GrantData was unexpected by the dcache.")
       when(d_last) {
-        tl_error_valid := tl_out.d.bits.denied
         cached_grant_wait := false
         grantInProgress := false
         blockProbeAfterGrantCount := blockProbeAfterGrantCycles - 1
@@ -628,12 +623,7 @@ class DCacheModule(outer: DCache) extends HellaCacheModule(outer) {
     }
     tl_out_c.bits.address := probe_bits.address
     tl_out_c.bits.data := s2_data_corrected
-    tl_out_c.bits.corrupt := inWriteback && {
-      val accrued = Reg(Bool())
-      val next = writeback_data_uncorrectable || (accrued && !c_first)
-      when (tl_out_c.fire()) { accrued := next }
-      next
-    }
+    tl_out_c.bits.corrupt := inWriteback && writeback_data_uncorrectable
   }
 
   dataArb.io.in(2).valid := inWriteback && releaseDataBeat < refillCycles
@@ -660,12 +650,6 @@ class DCacheModule(outer: DCache) extends HellaCacheModule(outer) {
   val s1_xcpt_valid = tlb.io.req.valid && !s1_nack
   val s1_xcpt = tlb.io.resp
   io.cpu.s2_xcpt := Mux(RegNext(s1_xcpt_valid), RegEnable(s1_xcpt, s1_valid_not_nacked), 0.U.asTypeOf(s1_xcpt))
-  ccoverNotScratchpad(s2_valid_pre_xcpt && s2_tl_error, "D_ERROR_REPORTED", "D$ reported TL error to processor")
-  when (s2_valid_pre_xcpt && s2_tl_error) {
-    assert(!s2_valid_hit && !s2_uncached)
-    when (s2_write) { io.cpu.s2_xcpt.ae.st := true }
-    when (s2_read) { io.cpu.s2_xcpt.ae.ld := true }
-  }
 
   val s2_isSlavePortAccess = s2_req.phys
   if (usingDataScratchpad) {
@@ -794,7 +778,7 @@ class DCacheModule(outer: DCache) extends HellaCacheModule(outer) {
       c.bits := error_addr
       io.errors.uncorrectable.foreach { u => when (u.valid) { c.valid := false } }
     }
-    io.errors.bus.valid := tl_out.d.fire() && (tl_out.d.bits.denied || !grantIsCached && tl_out.d.bits.corrupt)
+    io.errors.bus.valid := tl_out.d.fire() && (tl_out.d.bits.denied || tl_out.d.bits.corrupt)
     io.errors.bus.bits := Mux(grantIsCached, s2_req.addr >> idxLSB << idxLSB, 0.U)
 
     ccoverNotScratchpad(io.errors.bus.valid && grantIsCached, "D_ERROR_CACHED", "D$ D-channel error, cached")
